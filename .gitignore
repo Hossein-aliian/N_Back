@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# App-generated files
+settings.json
+participants.xlsx
+participants.csv
+results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.rar
+*.zip
