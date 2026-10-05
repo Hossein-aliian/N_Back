@@ -5,6 +5,7 @@ Visual N-Back task with participant form + Excel export.
 UI: English  |  Excel headers: Persian  |  Text inputs: Persian supported.
 Includes in-app settings menu (gear icon, top-left).
 Includes post-test restart prompt.
+Includes Random / Manual stage ordering modes.
 """
 
 import pygame
@@ -13,6 +14,7 @@ import sys
 import csv
 import math
 import json
+import copy
 from pathlib import Path
 from datetime import datetime
 from statistics import mean, NormalDist
@@ -75,6 +77,14 @@ CONFIG = {
     "match_rate": 0.20,
     "target_folder_rate": 0.5,
 
+    # --- Stage ordering mode ---
+    "stage_mode": "random",          # "random" or "manual"
+    "manual_stages": [
+        {"target": "high",    "filler": "neutral", "target_rate": 0.5},
+        {"target": "low",     "filler": "neutral", "target_rate": 0.5},
+        {"target": "neutral", "filler": "high",    "target_rate": 0.5},
+    ],
+
     # --- Timing (ms) ---
     "image_duration_ms": 2000,
     "rest_duration_ms": 1000,
@@ -109,7 +119,7 @@ CONFIG = {
     # --- Buttons ---
     "btn_size": (170, 52),
     "btn_gap": 30,
-    "btn_radius": 26,
+    "btn_radius": 16,
     "btn_match_fill": (110, 180, 255),
     "btn_match_border": (110, 180, 255),
     "btn_nomatch_fill": None,
@@ -137,9 +147,11 @@ EDITABLE_KEYS = [
     "inter_trial_pause_ms",
     "min_gap",
     "min_match_gap",
+    "stage_mode",
+    "manual_stages",
 ]
 
-DEFAULT_CONFIG = {k: CONFIG[k] for k in EDITABLE_KEYS}
+DEFAULT_CONFIG = copy.deepcopy({k: CONFIG[k] for k in EDITABLE_KEYS})
 
 
 STAGE_DESIGNS = [
@@ -147,6 +159,21 @@ STAGE_DESIGNS = [
     {"target": "low",     "filler": "neutral", "label": "Unattractive Faces"},
     {"target": "neutral", "filler": "high",    "label": "Neutral Faces"},
 ]
+
+
+FOLDERS = ["high", "low", "neutral"]
+
+FOLDER_LABELS = {
+    "high":    "Attractive Faces",
+    "low":     "Unattractive Faces",
+    "neutral": "Neutral Faces",
+}
+
+FOLDER_SHORT = {
+    "high":    "Attractive",
+    "low":     "Unattractive",
+    "neutral": "Neutral",
+}
 
 
 # ============================================================
@@ -178,16 +205,47 @@ def load_settings():
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         for k, v in data.items():
-            if k in DEFAULT_CONFIG:
-                default = DEFAULT_CONFIG[k]
-                if isinstance(default, bool):
-                    CONFIG[k] = bool(v)
-                elif isinstance(default, float):
-                    CONFIG[k] = float(v)
-                elif isinstance(default, int):
-                    CONFIG[k] = int(round(float(v)))
-                else:
-                    CONFIG[k] = v
+            if k not in DEFAULT_CONFIG:
+                continue
+
+            if k == "stage_mode":
+                CONFIG[k] = v if v in ("random", "manual") else "random"
+                continue
+
+            if k == "manual_stages":
+                if (isinstance(v, list) and len(v) == 3
+                        and all(isinstance(s, dict) for s in v)):
+                    validated = []
+                    for s in v:
+                        target = s.get("target", "high")
+                        filler = s.get("filler", "neutral")
+                        rate = s.get("target_rate", 0.5)
+                        if target not in FOLDER_LABELS:
+                            target = "high"
+                        if filler not in FOLDER_LABELS:
+                            filler = "neutral"
+                        try:
+                            rate = float(rate)
+                        except (TypeError, ValueError):
+                            rate = 0.5
+                        rate = max(0.10, min(0.90, rate))
+                        validated.append({
+                            "target": target,
+                            "filler": filler,
+                            "target_rate": rate,
+                        })
+                    CONFIG[k] = validated
+                continue
+
+            default = DEFAULT_CONFIG[k]
+            if isinstance(default, bool):
+                CONFIG[k] = bool(v)
+            elif isinstance(default, float):
+                CONFIG[k] = float(v)
+            elif isinstance(default, int):
+                CONFIG[k] = int(round(float(v)))
+            else:
+                CONFIG[k] = v
     except Exception as e:
         print(f"[Settings] Failed to load settings.json: {e}")
 
@@ -613,8 +671,8 @@ def draw_small_button(screen, rect, text, font, color, hover, enabled=True):
         border = color
         txt_color = (255, 255, 255)
 
-    pygame.draw.rect(screen, fill, rect, border_radius=8)
-    pygame.draw.rect(screen, border, rect, width=2, border_radius=8)
+    pygame.draw.rect(screen, fill, rect, border_radius=16)
+    pygame.draw.rect(screen, border, rect, width=2, border_radius=16)
     txt = font.render(text, True, txt_color)
     screen.blit(txt, txt.get_rect(center=rect.center))
 
@@ -668,9 +726,9 @@ class TextInput:
         border_color = (colors["accent_color"] if self.active
                         else colors["border_color"])
         pygame.draw.rect(screen, colors["panel_light"], self.rect,
-                         border_radius=8)
+                         border_radius=16)
         pygame.draw.rect(screen, border_color, self.rect,
-                         width=2, border_radius=8)
+                         width=2, border_radius=16)
 
         display_text = shape_persian(self.value)
         text_surf = fonts["body"].render(display_text, True, colors["text_color"])
@@ -721,12 +779,189 @@ class GenderSelector:
             fill = colors["accent_color"] if is_selected else colors["panel_light"]
             border = colors["accent_color"] if is_selected else colors["border_color"]
 
-            pygame.draw.rect(screen, fill, r, border_radius=8)
-            pygame.draw.rect(screen, border, r, width=2, border_radius=8)
+            pygame.draw.rect(screen, fill, r, border_radius=16)
+            pygame.draw.rect(screen, border, r, width=2, border_radius=16)
 
             txt_color = (255, 255, 255) if is_selected else colors["text_color"]
             txt = fonts["body"].render(self.options[i], True, txt_color)
             screen.blit(txt, txt.get_rect(center=r.center))
+
+
+# ============================================================
+#  STAGE CONFIG SCREEN (Manual Mode)
+# ============================================================
+def show_stage_config_screen(screen, config, fonts):
+    drain_events()
+    clock = pygame.time.Clock()
+    W, H = config["window_size"]
+
+    panel_w, panel_h = 1000, 500
+    panel = pygame.Rect((W - panel_w) // 2, (H - panel_h) // 2,
+                        panel_w, panel_h)
+
+    stages = config["manual_stages"]
+
+    stage_layouts = []
+    rows_start = panel.y + 110
+    row_h = 100
+
+    btn_w, btn_h = 90, 34
+    btn_gap = 6
+    btn_radius = 16          
+
+    for i in range(3):
+        y = rows_start + i * row_h
+
+        target_x = panel.x + 130
+        target_btns = []
+        for j, folder in enumerate(FOLDERS):
+            r = pygame.Rect(target_x + j * (btn_w + btn_gap), y + 40,
+                            btn_w, btn_h)
+            target_btns.append((folder, r))
+
+        filler_x = target_x + 3 * (btn_w + btn_gap) + 40
+        filler_btns = []
+        for j, folder in enumerate(FOLDERS):
+            r = pygame.Rect(filler_x + j * (btn_w + btn_gap), y + 40,
+                            btn_w, btn_h)
+            filler_btns.append((folder, r))
+
+        rate_x = filler_x + 3 * (btn_w + btn_gap) + 40
+        minus_r = pygame.Rect(rate_x, y + 40, 34, btn_h)
+        value_r = pygame.Rect(rate_x + 40, y + 40, 70, btn_h)
+        plus_r  = pygame.Rect(rate_x + 116, y + 40, 34, btn_h)
+
+        stage_layouts.append({
+            "i": i, "y": y,
+            "target_btns": target_btns,
+            "filler_btns": filler_btns,
+            "minus_r": minus_r,
+            "value_r": value_r,
+            "plus_r": plus_r,
+        })
+
+    back_rect = pygame.Rect(W // 2 - 100, panel.bottom - 68, 200, 48)
+
+    while True:
+        mouse_pos = pygame.mouse.get_pos()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                save_settings()
+                return
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for lay in stage_layouts:
+                    st = stages[lay["i"]]
+
+                    for folder, r in lay["target_btns"]:
+                        if r.collidepoint(event.pos):
+                            st["target"] = folder
+                    for folder, r in lay["filler_btns"]:
+                        if r.collidepoint(event.pos):
+                            st["filler"] = folder
+
+                    if lay["minus_r"].collidepoint(event.pos):
+                        st["target_rate"] = max(0.10, round(st["target_rate"] - 0.05, 2))
+                    if lay["plus_r"].collidepoint(event.pos):
+                        st["target_rate"] = min(0.90, round(st["target_rate"] + 0.05, 2))
+
+                if back_rect.collidepoint(event.pos):
+                    save_settings()
+                    return
+
+        screen.fill(config["bg_color"])
+        draw_panel(screen, panel, config["panel_color"],
+                   border=config["border_color"], radius=22, width=2)
+
+        draw_text(screen, "Configure Stages (Manual Mode)", fonts["title"],
+                  config["accent_color"], center=(W // 2, panel.y + 45))
+        pygame.draw.line(screen, config["border_color"],
+                         (panel.x + 40, panel.y + 82),
+                         (panel.right - 40, panel.y + 82), 2)
+
+        for lay in stage_layouts:
+            i = lay["i"]
+            st = stages[i]
+            y = lay["y"]
+
+            draw_text(screen, f"Stage {i + 1}", fonts["large"],
+                      config["text_color"], topleft=(panel.x + 40, y + 48))
+
+            draw_text(screen, "Target", fonts["small"], config["muted_color"],
+                      topleft=(lay["target_btns"][0][1].x, y + 20))
+            for folder, r in lay["target_btns"]:
+                sel = (st["target"] == folder)
+                fill = config["accent_color"] if sel else config["panel_light"]
+                border = config["accent_color"] if sel else config["border_color"]
+                pygame.draw.rect(screen, fill, r, border_radius=btn_radius)
+                pygame.draw.rect(screen, border, r, width=2,
+                                 border_radius=btn_radius)
+                tc = (255, 255, 255) if sel else config["text_color"]
+                draw_text(screen, FOLDER_SHORT[folder], fonts["tiny"],
+                          tc, center=r.center)
+
+            draw_text(screen, "Filler", fonts["small"], config["muted_color"],
+                      topleft=(lay["filler_btns"][0][1].x, y + 20))
+            for folder, r in lay["filler_btns"]:
+                sel = (st["filler"] == folder)
+                fill = config["accent_color"] if sel else config["panel_light"]
+                border = config["accent_color"] if sel else config["border_color"]
+                pygame.draw.rect(screen, fill, r, border_radius=btn_radius)
+                pygame.draw.rect(screen, border, r, width=2,
+                                 border_radius=btn_radius)
+                tc = (255, 255, 255) if sel else config["text_color"]
+                draw_text(screen, FOLDER_SHORT[folder], fonts["tiny"],
+                          tc, center=r.center)
+
+            draw_text(screen, "Rate", fonts["small"], config["muted_color"],
+                      topleft=(lay["minus_r"].x, y + 20))
+
+            # Minus button
+            mh = lay["minus_r"].collidepoint(mouse_pos)
+            m_fill = ((tuple(c // 2 for c in config["accent_color"])) if mh
+                      else tuple(c // 3 for c in config["accent_color"]))
+            pygame.draw.rect(screen, m_fill, lay["minus_r"],
+                             border_radius=btn_radius)
+            pygame.draw.rect(screen, config["accent_color"], lay["minus_r"],
+                             width=2, border_radius=btn_radius)
+            draw_text(screen, "-", fonts["small"], (255, 255, 255),
+                      center=lay["minus_r"].center)
+
+            # Value box
+            pygame.draw.rect(screen, config["panel_light"], lay["value_r"],
+                             border_radius=btn_radius)
+            pygame.draw.rect(screen, config["border_color"], lay["value_r"],
+                             width=2, border_radius=btn_radius)
+            draw_text(screen, f"{int(round(st['target_rate']*100))}%",
+                      fonts["small"], config["text_color"],
+                      center=lay["value_r"].center)
+
+            # Plus button
+            ph = lay["plus_r"].collidepoint(mouse_pos)
+            p_fill = ((tuple(c // 2 for c in config["accent_color"])) if ph
+                      else tuple(c // 3 for c in config["accent_color"]))
+            pygame.draw.rect(screen, p_fill, lay["plus_r"],
+                             border_radius=btn_radius)
+            pygame.draw.rect(screen, config["accent_color"], lay["plus_r"],
+                             width=2, border_radius=btn_radius)
+            draw_text(screen, "+", fonts["small"], (255, 255, 255),
+                      center=lay["plus_r"].center)
+
+        # Back button
+        bh = back_rect.collidepoint(mouse_pos)
+        bf = (tuple(min(255, c + 30) for c in config["accent_color"])
+              if bh else config["accent_color"])
+        pygame.draw.rect(screen, bf, back_rect, border_radius=22)
+        draw_text(screen, "Back", fonts["small"], (255, 255, 255),
+                  center=back_rect.center)
+
+        pygame.display.flip()
+        clock.tick(60)
 
 
 # ============================================================
@@ -737,16 +972,16 @@ def show_settings_screen(screen, config, fonts):
     clock = pygame.time.Clock()
     W, H = config["window_size"]
 
-    panel_w, panel_h = 820, 700
+    panel_w, panel_h = 820, 720
     panel = pygame.Rect((W - panel_w) // 2, (H - panel_h) // 2,
                         panel_w, panel_h)
 
-    row_h = 52
-    row_gap = 6
-    rows_start_y = panel.y + 110
+    row_h = 42
+    row_gap = 4
+    rows_start_y = panel.y + 100
 
-    btn_w = 40
-    btn_h = 40
+    btn_w = 34
+    btn_h = 34
     label_x = panel.x + 40
     controls_right = panel.right - 40
     value_box_w = 130
@@ -765,8 +1000,18 @@ def show_settings_screen(screen, config, fonts):
             "plus_rect":  pygame.Rect(plus_x, y, btn_w, btn_h),
         })
 
-    reset_rect = pygame.Rect(panel.x + 40, panel.bottom - 78, 200, 52)
-    save_rect  = pygame.Rect(panel.right - 240, panel.bottom - 78, 200, 52)
+    # Stage mode row
+    sm_y = rows_start_y + len(SETTINGS_SPEC) * (row_h + row_gap)
+    sm_label_x = label_x
+    sm_random_rect = pygame.Rect(value_box_x - 30, sm_y, 90, btn_h)
+    sm_manual_rect = pygame.Rect(value_box_x + 70, sm_y, 90, btn_h)
+
+    # Configure stages button row
+    cfg_y = sm_y + row_h + row_gap
+    cfg_rect = pygame.Rect(value_box_x - 30, cfg_y, 260, btn_h)
+
+    reset_rect = pygame.Rect(panel.x + 40, panel.bottom - 68, 200, 50)
+    save_rect  = pygame.Rect(panel.right - 240, panel.bottom - 68, 200, 50)
 
     while True:
         mouse_pos = pygame.mouse.get_pos()
@@ -795,9 +1040,22 @@ def show_settings_screen(screen, config, fonts):
                         if new_val <= spec["max"] + 1e-9:
                             config[key] = round(new_val, 4)
 
+                # Stage mode toggle
+                if sm_random_rect.collidepoint(event.pos):
+                    config["stage_mode"] = "random"
+                elif sm_manual_rect.collidepoint(event.pos):
+                    config["stage_mode"] = "manual"
+
+                # Configure stages
+                if (config["stage_mode"] == "manual"
+                        and cfg_rect.collidepoint(event.pos)):
+                    show_stage_config_screen(screen, config, fonts)
+                    drain_events()
+                    continue
+
                 if reset_rect.collidepoint(event.pos):
                     for k, v in DEFAULT_CONFIG.items():
-                        config[k] = v
+                        config[k] = copy.deepcopy(v)
 
                 if save_rect.collidepoint(event.pos):
                     save_settings()
@@ -808,10 +1066,10 @@ def show_settings_screen(screen, config, fonts):
                    border=config["border_color"], radius=22, width=2)
 
         draw_text(screen, "Settings", fonts["title"], config["accent_color"],
-                  center=(W // 2, panel.y + 48))
+                  center=(W // 2, panel.y + 42))
         pygame.draw.line(screen, config["border_color"],
-                         (panel.x + 40, panel.y + 82),
-                         (panel.right - 40, panel.y + 82), 2)
+                         (panel.x + 40, panel.y + 76),
+                         (panel.right - 40, panel.y + 76), 2)
 
         for row in rows:
             spec = row["spec"]
@@ -819,44 +1077,83 @@ def show_settings_screen(screen, config, fonts):
 
             draw_text(screen, spec["label"], fonts["body"],
                       config["text_color"],
-                      topleft=(label_x, row["y"] + 11))
+                      topleft=(label_x, row["y"] + 6))
 
             at_min = val <= spec["min"] + 1e-9
-            minus_hover = row["minus_rect"].collidepoint(mouse_pos)
-            draw_small_button(screen, row["minus_rect"], "-", fonts["med"],
-                              config["accent_color"], minus_hover,
+            mh = row["minus_rect"].collidepoint(mouse_pos)
+            draw_small_button(screen, row["minus_rect"], "-", fonts["small"],
+                              config["accent_color"], mh,
                               enabled=not at_min)
 
             pygame.draw.rect(screen, config["panel_light"],
-                             row["value_rect"], border_radius=8)
+                             row["value_rect"], border_radius=16)
             pygame.draw.rect(screen, config["border_color"],
-                             row["value_rect"], width=2, border_radius=8)
-            draw_text(screen, spec["format"](val), fonts["med"],
+                             row["value_rect"], width=2, border_radius=16)
+            draw_text(screen, spec["format"](val), fonts["body"],
                       config["text_color"], center=row["value_rect"].center)
 
             at_max = val >= spec["max"] - 1e-9
-            plus_hover = row["plus_rect"].collidepoint(mouse_pos)
-            draw_small_button(screen, row["plus_rect"], "+", fonts["med"],
-                              config["accent_color"], plus_hover,
+            ph = row["plus_rect"].collidepoint(mouse_pos)
+            draw_small_button(screen, row["plus_rect"], "+", fonts["small"],
+                              config["accent_color"], ph,
                               enabled=not at_max)
+
+        # --- Stage mode row ---
+        draw_text(screen, "Stage Mode", fonts["body"], config["text_color"],
+                  topleft=(sm_label_x, sm_y + 6))
+
+        is_random = (config["stage_mode"] == "random")
+        rh = sm_random_rect.collidepoint(mouse_pos)
+        mh2 = sm_manual_rect.collidepoint(mouse_pos)
+
+        for rect, label, selected, hov in [
+            (sm_random_rect, "Random", is_random, rh),
+            (sm_manual_rect, "Manual", not is_random, mh2),
+        ]:
+            if selected:
+                fill = config["accent_color"]
+                border = config["accent_color"]
+                tc = (255, 255, 255)
+            elif hov:
+                fill = (30, 50, 80)
+                border = config["accent_color"]
+                tc = config["accent_color"]
+            else:
+                fill = config["panel_light"]
+                border = config["border_color"]
+                tc = config["text_color"]
+            pygame.draw.rect(screen, fill, rect, border_radius=16)
+            pygame.draw.rect(screen, border, rect, width=2, border_radius=16)
+            draw_text(screen, label, fonts["small"], tc, center=rect.center)
+
+        # --- Configure stages button ---
+        if not is_random:
+            ch = cfg_rect.collidepoint(mouse_pos)
+            cf = (tuple(min(255, c + 30) for c in config["accent_color"])
+                  if ch else tuple(c // 2 for c in config["accent_color"]))
+            pygame.draw.rect(screen, cf, cfg_rect, border_radius=16)
+            pygame.draw.rect(screen, config["accent_color"], cfg_rect,
+                             width=2, border_radius=16)
+            draw_text(screen, "Configure Stages...", fonts["small"],
+                      (255, 255, 255), center=cfg_rect.center)
 
         warn = _config_warning(config)
         if warn:
-            draw_text(screen, warn, fonts["small"], config["warn_color"],
-                      center=(W // 2, panel.bottom - 108))
+            draw_text(screen, warn, fonts["tiny"], config["warn_color"],
+                      center=(W // 2, panel.bottom - 90))
 
-        reset_hover = reset_rect.collidepoint(mouse_pos)
-        reset_fill = ((70, 76, 94) if reset_hover else (50, 54, 70))
-        pygame.draw.rect(screen, reset_fill, reset_rect, border_radius=12)
+        rh2 = reset_rect.collidepoint(mouse_pos)
+        rfill = (70, 76, 94) if rh2 else (50, 54, 70)
+        pygame.draw.rect(screen, rfill, reset_rect, border_radius=16)
         pygame.draw.rect(screen, (120, 128, 148), reset_rect,
-                         width=2, border_radius=12)
+                         width=2, border_radius=16)
         draw_text(screen, "Reset Defaults", fonts["body"],
                   config["text_color"], center=reset_rect.center)
 
-        save_hover = save_rect.collidepoint(mouse_pos)
-        save_fill = (tuple(min(255, c + 30) for c in config["accent_color"])
-                     if save_hover else config["accent_color"])
-        pygame.draw.rect(screen, save_fill, save_rect, border_radius=12)
+        sh = save_rect.collidepoint(mouse_pos)
+        sfill = (tuple(min(255, c + 30) for c in config["accent_color"])
+                 if sh else config["accent_color"])
+        pygame.draw.rect(screen, sfill, save_rect, border_radius=16)
         draw_text(screen, "Save & Close", fonts["body"], (255, 255, 255),
                   center=save_rect.center)
 
@@ -984,7 +1281,7 @@ def show_participant_form(screen, config, fonts):
         hover = submit_rect.collidepoint(pygame.mouse.get_pos())
         btn_color = (tuple(min(255, c + 30) for c in config["accent_color"])
                      if hover else config["accent_color"])
-        pygame.draw.rect(screen, btn_color, submit_rect, border_radius=12)
+        pygame.draw.rect(screen, btn_color, submit_rect, border_radius=16)
         draw_text(screen, "Start Test", fonts["med"], (255, 255, 255),
                   center=submit_rect.center)
 
@@ -1000,9 +1297,9 @@ def show_participant_form(screen, config, fonts):
         gear_hover = gear_rect.collidepoint(pygame.mouse.get_pos())
         gear_bg = (config["panel_light"] if gear_hover
                    else config["panel_color"])
-        pygame.draw.rect(screen, gear_bg, gear_rect, border_radius=10)
+        pygame.draw.rect(screen, gear_bg, gear_rect, border_radius=16)
         pygame.draw.rect(screen, config["border_color"], gear_rect,
-                         width=1, border_radius=10)
+                         width=1, border_radius=16)
         gear_color = (config["accent_color"] if gear_hover
                       else config["muted_color"])
         draw_gear_icon(screen, gear_rect.center, 11, gear_color)
@@ -1273,7 +1570,8 @@ def run_stage(screen, stage_design, config, folder_images, image_cache,
         filler_folder=filler,
         folder_images=folder_images,
         match_rate=config["match_rate"],
-        target_rate=config["target_folder_rate"],
+        target_rate=stage_design.get("target_rate",
+                                     config["target_folder_rate"]),
         min_gap=config["min_gap"],
         min_match_gap=config["min_match_gap"],
     )
@@ -1778,8 +2076,18 @@ def main():
             ]
         )
 
-        stages = STAGE_DESIGNS.copy()
-        random.shuffle(stages)
+        if CONFIG.get("stage_mode", "random") == "manual":
+            stages = []
+            for cfg in CONFIG["manual_stages"]:
+                stages.append({
+                    "target": cfg["target"],
+                    "filler": cfg["filler"],
+                    "label": FOLDER_LABELS[cfg["target"]],
+                    "target_rate": cfg["target_rate"],
+                })
+        else:
+            stages = copy.deepcopy(STAGE_DESIGNS)
+            random.shuffle(stages)
 
         all_results = []
         stage_stats = {}

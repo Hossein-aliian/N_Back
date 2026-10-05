@@ -71,6 +71,17 @@ adjust:
 | N level | 2 |
 | Match rate | 20% |
 | Min match gap | 3 |
+| **Stage Mode** | **Random** |
+
+### 🎛️ Stage Mode
+
+- **Random** (default): classic N-Back — stages shuffled randomly, 50/50 target/filler
+- **Manual**: researcher configures each stage individually:
+  - Which folder is **Target** (Attractive / Neutral / Unattractive)
+  - Which folder is **Filler**
+  - What **% of trials** come from the Target folder (10% – 90%)
+
+In Manual mode, click **Configure Stages...** to open the configuration screen.
 
 ---
 
