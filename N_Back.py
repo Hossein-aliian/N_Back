@@ -255,6 +255,8 @@ def save_settings():
         data = {k: CONFIG[k] for k in EDITABLE_KEYS if k in CONFIG}
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+    except PermissionError:
+        print(f"[Settings] Cannot write settings.json — file is locked.")
     except Exception as e:
         print(f"[Settings] Failed to save settings.json: {e}")
 
@@ -1864,6 +1866,63 @@ def _fmt_or_blank(v, digits=0):
         return round(v, 0)
     return round(v, digits)
 
+def _show_excel_locked_popup(screen, config, fonts, fallback_path):
+    """نمایش پاپ‌آپ هشدار وقتی فایل Excel قفل باشه."""
+    if screen is None:
+        return
+    clock = pygame.time.Clock()
+    W, H = config["window_size"]
+    panel_w, panel_h = 640, 280
+    panel = pygame.Rect((W - panel_w) // 2, (H - panel_h) // 2,
+                        panel_w, panel_h)
+    btn_rect = pygame.Rect(W // 2 - 90, panel.bottom - 70, 180, 44)
+
+    while True:
+        mouse_pos = pygame.mouse.get_pos()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return
+            if event.type == pygame.KEYDOWN and event.key in (
+                    pygame.K_SPACE, pygame.K_RETURN, pygame.K_ESCAPE):
+                return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if btn_rect.collidepoint(event.pos):
+                    return
+
+        screen.fill(config["bg_color"])
+        draw_panel(screen, panel, config["panel_color"],
+                   border=config["warn_color"], radius=18, width=2)
+
+        draw_text(screen, "Excel File Is Locked",
+                  fonts["large"], config["warn_color"],
+                  center=(W // 2, panel.y + 45))
+
+        pygame.draw.line(screen, config["border_color"],
+                         (panel.x + 30, panel.y + 75),
+                         (panel.right - 30, panel.y + 75), 2)
+
+        draw_text(screen, "The file participants.xlsx is open in Excel",
+                  fonts["body"], config["text_color"],
+                  center=(W // 2, panel.y + 105))
+        draw_text(screen, "or another program, so it cannot be updated.",
+                  fonts["body"], config["text_color"],
+                  center=(W // 2, panel.y + 130))
+        draw_text(screen, "Results were saved to a new file:",
+                  fonts["body"], config["muted_color"],
+                  center=(W // 2, panel.y + 168))
+        draw_text(screen, fallback_path.name,
+                  fonts["small"], config["accent_color"],
+                  center=(W // 2, panel.y + 198))
+
+        hover = btn_rect.collidepoint(mouse_pos)
+        fill = (tuple(min(255, c + 30) for c in config["accent_color"])
+                if hover else config["accent_color"])
+        pygame.draw.rect(screen, fill, btn_rect, border_radius=16)
+        draw_text(screen, "OK", fonts["med"], (255, 255, 255),
+                  center=btn_rect.center)
+
+        pygame.display.flip()
+        clock.tick(60)
 
 def save_to_excel(participant, stage_stats, overall_stats, config):
     if not HAS_OPENPYXL:
@@ -2006,9 +2065,28 @@ def save_to_excel(participant, stage_stats, overall_stats, config):
     except Exception:
         pass
 
-    wb.save(path)
-    print(f"[Excel] Participant row appended to: {path}")
-    return path
+    try:
+        wb.save(path)
+        print(f"[Excel] Participant row appended to: {path}")
+        return path
+
+    except PermissionError:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fallback = BASE_DIR / f"{path.stem}_locked_{ts}{path.suffix}"
+        try:
+            wb.save(fallback)
+            print("[Excel] Original file is locked (open in Excel?).")
+            print(f"[Excel] Saved to fallback file instead: {fallback}")
+            return fallback
+        except Exception as e2:
+            print(f"[Excel] Fallback save also failed: {e2}")
+            _save_to_csv_fallback(participant, stage_stats, overall_stats)
+            return None
+
+    except Exception as e:
+        print(f"[Excel] Failed to save Excel: {e}")
+        _save_to_csv_fallback(participant, stage_stats, overall_stats)
+        return None
 
 
 def _save_to_csv_fallback(participant, stage_stats, overall_stats):
@@ -2107,7 +2185,11 @@ def main():
         overall["total_score"] = running_score
 
         save_results(all_results, CONFIG)
-        save_to_excel(participant, stage_stats, overall, CONFIG)
+
+        saved_path = save_to_excel(participant, stage_stats, overall, CONFIG)
+        expected_path = BASE_DIR / CONFIG["excel_filename"]
+        if saved_path is not None and saved_path != expected_path:
+            _show_excel_locked_popup(screen, CONFIG, fonts, saved_path)
 
         action = show_results_screen(screen, CONFIG, fonts,
                                      stage_stats, overall)
